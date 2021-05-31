@@ -25,7 +25,7 @@ class LinearRegressionData:
         self.X = None
         self.y = None
 
-    def covariance(self):
+    def set_covariance(self):
         """
         Allow users to specify a covariance matrix concisely
 
@@ -33,7 +33,7 @@ class LinearRegressionData:
         """
         pass
 
-    def weights(self):
+    def set_weights(self):
         """
         Allow users to generate weights concisely
 
@@ -94,8 +94,7 @@ class RidgeRegression:
         :param tau: regularization hyperparameter
         :return: X_tilde, y_tilde
         """
-        n = np.shape(X)[0]
-        p = np.shape(X)[1]
+        n, p = np.shape(X)
         lambda_prior = np.identity(p)/(np.power(tau, 2.0))
         x_tilde = np.concatenate((X, np.sqrt(lambda_prior)), axis=0)
         y_tilde = np.concatenate((y, np.zeros(p)))
@@ -220,8 +219,7 @@ class RobustLinearRegression:
         :param y: output to be predicted
         :param delta:
         """
-        n = np.shape(X)[0]
-        p = np.shape(X)[1]
+        n, p = np.shape(X)
         empty_weights = np.ones(p)
         huber_solve = minimize(fun=lambda wgt: self.loss_huber(y - np.matmul(X, wgt), delta=delta),
                                x0=empty_weights)
