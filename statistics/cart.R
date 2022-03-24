@@ -1,6 +1,6 @@
 ###############################################################################
 # Very simple R-native implementation of CART for continuous outcomes 
-# and a continuous, univariate predictor
+# and continuous predictors
 ###############################################################################
 
 ### 1. Data structure functions
@@ -11,18 +11,19 @@
 # Crawl through a tree from a specific node, 
 # extract all of the conditions that are true at that node
 get_subset = function(node_index, tree_array, x){
-  subset_cond = rep(T, length(x))
+  subset_cond = rep(T, nrow(x))
   current_node_index = node_index
   parent_index = tree_array[current_node_index, 6]
   if (!is.na(parent_index)){
     while(!is.na(parent_index)){
       parent_cutoff = tree_array[parent_index, 5]
+      split_variable = tree_array[parent_index, 4]
       child_node_type = tree_array[current_node_index, 7]
       if (child_node_type == 1) {
-        child_node_cond <- (x >= parent_cutoff)
+        child_node_cond <- (x[,split_variable] >= parent_cutoff)
       } else{ 
         if (child_node_type == -1) {
-          child_node_cond <- (x < parent_cutoff)
+          child_node_cond <- (x[,split_variable] < parent_cutoff)
         } else {
           child_node_cond = subset_cond
         }}
@@ -37,7 +38,7 @@ get_subset = function(node_index, tree_array, x){
 tree_basis = function(tree_array, x){
   # Extract all of the leaves
   leaf_indices = (1:nrow(tree_array))[(tree_array[,8] == 1) & (!is.na(tree_array[,7]))]
-  basis_matrix = matrix(NA, nrow = length(x), ncol = length(leaf_indices))
+  basis_matrix = matrix(NA, nrow = nrow(x), ncol = length(leaf_indices))
   for (i in 1:length(leaf_indices)){
     basis_matrix[,i] = get_subset(leaf_indices[i], tree_array, x)*1
   }
@@ -51,12 +52,13 @@ node_path = function(node_index, tree_array, x){
   if (!is.na(parent_index)){
     while(!is.na(parent_index)){
       parent_cutoff = tree_array[parent_index, 5]
+      split_variable = tree_array[parent_index, 4]
       child_node_type = tree_array[current_node_index, 7]
       if (child_node_type == 1) {
-        child_node_statement <- paste0("x >= ", format(parent_cutoff, digits = 2))
+        child_node_statement <- paste0("x[,", split_variable, "] >= ", format(parent_cutoff, digits = 2))
       } else{ 
         if (child_node_type == -1) {
-          child_node_statement <- paste0("x < ", format(parent_cutoff, digits = 2))
+          child_node_statement <- paste0("x[,", split_variable, "] < ", format(parent_cutoff, digits = 2))
         } else {
           child_node_statement = ""
         }}
@@ -105,8 +107,15 @@ variance_reduction = function(cutoff, x, y, var_num = 1){
 # For a given restricted set of x and y, find the optimal x 
 # cutoff at which to split
 tree_split = function(x, y, var_num = 1, epsilon = EPSILON){
-  optim_results = optimize(function(i) variance_reduction(i, x, y), range(x), maximum = T)
-  if (optim_results$objective > epsilon) return(optim_results$maximum)
+  # Look for optimal splits along each variable
+  p = ncol(x)
+  optim_results = sapply(1:p, function(j) optimize(function(i) variance_reduction(i, x[,j], y), range(x), maximum = T))
+  optim_results = matrix(as.numeric(optim_results), ncol = p, byrow = F)
+
+  # Choose the variable with the largest reduction in variance
+  best_col = (1:p)[which(optim_results[2,]==max(optim_results[2,]))]
+  
+  if (optim_results[2,best_col] > epsilon) return(c(best_col, optim_results[1,best_col]))
   else return(NULL)
 }
 # Train a decision tree from root, without pruning
@@ -122,8 +131,10 @@ fit_tree = function(tree_array, x, y, EPSILON, MAX_ITER){
     
     # Get the subsetting criteria at this node
     node_subset = get_subset(current_node_index, tree_array, x)
-    x_node = x[node_subset]
+    x_node = x[node_subset,]
     y_node = y[node_subset]
+    
+    # Search over all variables for a splitting rule
     split_value = tree_split(x_node, y_node, EPSILON)
     
     # Update the tree array and append to the queue
@@ -143,18 +154,18 @@ fit_tree = function(tree_array, x, y, EPSILON, MAX_ITER){
       # Update the array for the splitting node to note which variables were split
       tree_array[current_node_index,2] = left_node_index
       tree_array[current_node_index,3] = right_node_index
-      tree_array[current_node_index,4] = 1
-      tree_array[current_node_index,5] = split_value
+      tree_array[current_node_index,4] = split_value[1]
+      tree_array[current_node_index,5] = split_value[2]
       tree_array[current_node_index,8] = 0
       
       # Update the array for the left node
-      tree_array[left_node_index,1] = mean(y_node[x_node < split_value])
+      tree_array[left_node_index,1] = mean(y_node[x_node[,split_value[1]] < split_value[2]])
       tree_array[left_node_index,6] = current_node_index
       tree_array[left_node_index,7] = -1
       tree_array[left_node_index,8] = 1
       
       # Update the array for the right node
-      tree_array[right_node_index,1] = mean(y_node[x_node >= split_value])
+      tree_array[right_node_index,1] = mean(y_node[x_node[,split_value[1]] >= split_value[2]])
       tree_array[right_node_index,6] = current_node_index
       tree_array[right_node_index,7] = 1
       tree_array[right_node_index,8] = 1
@@ -173,21 +184,22 @@ fit_tree = function(tree_array, x, y, EPSILON, MAX_ITER){
 
 # Generate data from a simple 1D function
 n = 5000
-x = runif(n, -1, 1)
+p = 10
+x = matrix(runif(n*p, -1, 1), ncol = p)
 # # Example 1: Monotone step function
 # b_0 = 2; b_1 = 1
-# E_y = (b_0 + b_1*(x > -0.75) + b_1*(x > -0.5) + b_1*(x > -0.25) + 
-#        b_1*(x > 0) + b_1*(x > 0.25) + b_1*(x > 0.5) + b_1*(x > 0.75))
+# E_y = (b_0 + b_1*(x[,1] > -0.75) + b_1*(x[,1] > -0.5) + b_1*(x[,1] > -0.25) + 
+#        b_1*(x[,1] > 0) + b_1*(x[,1] > 0.25) + b_1*(x[,1] > 0.5) + b_1*(x[,1] > 0.75))
 # # Example 2: Fluctuating step function
 # b_0 = 2; b_1 = 1
-# E_y = (b_0 + b_1*(x > -0.75) + b_1*(x > -0.5) - b_1*(x > -0.25) -
-#        b_1*(x > 0) + b_1*(x > 0.25) + b_1*(x > 0.5) - b_1*(x > 0.75))
+# E_y = (b_0 + b_1*(x[,1] > -0.75) + b_1*(x[,1] > -0.5) - b_1*(x[,1] > -0.25) -
+#        b_1*(x[,1] > 0) + b_1*(x[,1] > 0.25) + b_1*(x[,1] > 0.5) - b_1*(x[,1] > 0.75))
 # # Example 3: sin function
-E_y = sin(x*pi)
+E_y = sin(x[,1]*pi) + sin(x[,2]*pi)
 # Sample random (additive) outcome noise
 eps = rnorm(n, 0, 0.1)
 y = E_y + eps
-# plot(x, y)
+# plot(x[,1], y)
 
 # Initialize an array of arbitrary length (will be resized as needed during training)
 # Col 1: expected value, given the conditions that apply to a given node
@@ -206,8 +218,8 @@ tree_array = matrix(NA, nrow = array_init_size, ncol = array_cols)
 tree_array[1,1] = mean(y)
 
 # Train the decision tree
-EPSILON = 0.01*sum((y-mean(y))^2)
-MAX_ITER = 100
+EPSILON = 0.0001*sum((y-mean(y))^2)
+MAX_ITER = 1000
 tree_array = fit_tree(tree_array, x, y, EPSILON, MAX_ITER)
 
 # Convert the leaves of the tree into "basis functions"
@@ -215,10 +227,10 @@ X_tree = tree_basis(tree_array, x)
 # Convert the matrix of bases into a single categorical variable
 X_basis_cat = apply(X_tree, 1, function(x) which(x == 1)[1])
 # Plot the data, color by tree leaf
-plot(x, y, col = X_basis_cat)
+plot(x[,1], y, col = X_basis_cat)
 # Extract "predictions" from the tree
 y_hat = predict_tree(tree_array, x)
 # Plot the predicted y values, coloring by tree leaf
-plot(x, y_hat, col = X_basis_cat)
+plot(x[,1], y_hat, col = X_basis_cat)
 # Plot the predicted versus actual y values
 plot(y, y_hat)
