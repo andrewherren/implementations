@@ -90,7 +90,7 @@ predict_tree = function(tree_array, x){
 
 # (SST - SSL - SSR) formula from rpart documentation
 # https://cran.r-project.org/web/packages/rpart/vignettes/longintro.pdf
-variance_reduction = function(cutoff, x, y, var_num = 1){
+variance_reduction = function(cutoff, x, y){
   # Original sum of squares
   ybar_t = mean(y)
   ss_t = sum((y-ybar_t)^2)
@@ -106,7 +106,7 @@ variance_reduction = function(cutoff, x, y, var_num = 1){
 }
 # For a given restricted set of x and y, find the optimal x 
 # cutoff at which to split
-tree_split = function(x, y, var_num = 1, epsilon = EPSILON){
+tree_split = function(x, y, epsilon = EPSILON){
   # Look for optimal splits along each variable
   p = ncol(x)
   optim_results = sapply(1:p, function(j) optimize(function(i) variance_reduction(i, x[,j], y), range(x), maximum = T))
