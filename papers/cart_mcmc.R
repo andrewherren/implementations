@@ -600,21 +600,28 @@ sample.split.node <- function(tree_array){
 }
 
 sample.new.split.rule <- function(X_subset, p){
-  # Randomly sample an available splitting feature
-  available_features = (1:p)[(apply(X_subset, 2, function(x) length(unique(x))) > 1)]
-  stopifnot(length(available_features) >= 1)
-  if (length(available_features) > 1){
-    split_feature = sample(available_features, 1)
+  if (is.null(dim(X_subset))){
+    return(NULL)
   } else{
-    split_feature = available_features[1]
+    # Randomly sample an available splitting feature
+    available_features = (1:p)[(apply(X_subset, 2, function(x) length(unique(x))) > 1)]
+    if (length(available_features) >= 1){
+      if (length(available_features) > 1){
+        split_feature = sample(available_features, 1)
+      } else{
+        split_feature = available_features[1]
+      }
+    } else{
+      return(NULL)
+    }
+    
+    # Randomly sample an available splitting rule
+    x_feature = X_subset[,split_feature]
+    available_splits = sort(unique(x_feature))[-length(unique(x_feature))]
+    split_value = sample(available_splits, 1)
+    
+    return(c(split_feature, split_value))
   }
-  
-  # Randomly sample an available splitting rule
-  x_feature = X_subset[,split_feature]
-  available_splits = sort(unique(x_feature))[-length(unique(x_feature))]
-  split_value = sample(available_splits, 1)
-  
-  return(c(split_feature, split_value))
 }
 
 sample.prune.node <- function(tree_array){
@@ -734,7 +741,8 @@ p_rule <- function(X_subset, p){
   if (!is.null(dim(X_subset))){
     available_features = (1:p)[(apply(X_subset, 2, function(x) length(unique(x))) > 1)]
     num_rules = sum(apply(X_subset, 2, function(x) length(unique(x))))
-    return(1/num_rules)
+    if (num_rules > 0) return(1/num_rules)
+    else return(0)
   } else{
     return(0)
   }
@@ -785,28 +793,37 @@ mh.tree <- function(tree_array, X, y, a, mu_bar, nu, lambda, alpha, beta){
   print(paste0("NEW MOVE = ", new_move))
   if (new_move == "GROW"){
     node_to_split <- sample.split.node(tree_array)
+    if (verbose){
+      print(paste0("GROWING NODE: ", node_to_split))
+    }
     subset_inds <- get_subset(node_to_split, tree_array, X)
     X_subset = X[subset_inds,]; p <- ncol(X)
     split_rule <- sample.new.split.rule(X_subset, p)
-    split_feature <- split_rule[1]
-    split_value <- split_rule[2]
-    new_tree_array <- grow_node(node_to_split, tree_array, X, y, split_feature, 
-                                split_value, a, mu_bar)
-    new_left_node <- new_tree_array[node_to_split,2]
-    new_right_node <- new_tree_array[node_to_split,3]
-    PG <- p_split(node_to_split, tree_array, alpha, beta)
-    PG.L <- p_split(new_left_node, new_tree_array, alpha, beta)
-    PG.R <- p_split(new_right_node, new_tree_array, alpha, beta)
-    PD <- p_prune(new_tree_array)
-    PB <- p_grow(tree_array)
-    Pbot <- 1/length(leaves(tree_array))
-    Pnog <- 1/length(leaf_parents(new_tree_array))
-    log.lr <- tree.log.likelihood.ratio(tree_array, new_tree_array, X, y, a, mu_bar, nu, lambda)
-    log_mh_ratio <- log.lr + log((PD*Pnog)/(PB*Pbot)) + log((PG*(1-PG.L)*(1-PG.R))/(1-PG))
+    if (is.null(split_rule)){
+      # Automatically reject leaf nodes that can't be split
+      log_mh_ratio <- -Inf
+    } else{
+      split_feature <- split_rule[1]
+      split_value <- split_rule[2]
+      new_tree_array <- grow_node(node_to_split, tree_array, X, y, split_feature, 
+                                  split_value, a, mu_bar)
+      new_left_node <- new_tree_array[node_to_split,2]
+      new_right_node <- new_tree_array[node_to_split,3]
+      PG <- p_split(node_to_split, tree_array, alpha, beta)
+      PG.L <- p_split(new_left_node, new_tree_array, alpha, beta)
+      PG.R <- p_split(new_right_node, new_tree_array, alpha, beta)
+      PD <- p_prune(new_tree_array)
+      PB <- p_grow(tree_array)
+      Pbot <- 1/length(leaves(tree_array))
+      Pnog <- 1/length(leaf_parents(new_tree_array))
+      log.lr <- tree.log.likelihood.ratio(tree_array, new_tree_array, X, y, a, mu_bar, nu, lambda)
+      log_mh_ratio <- log.lr + log((PD*Pnog)/(PB*Pbot)) + log((PG*(1-PG.L)*(1-PG.R))/(1-PG))
+    }
   } else if (new_move == "PRUNE"){
-    print(paste0("AVAILABLE LEAF PARENTS: ", leaf_parents(tree_array)))
     node_to_prune <- sample.prune.node(tree_array)
-    print(paste0("PRUNING NODE: ", node_to_prune))
+    if (verbose){
+      print(paste0("PRUNING NODE: ", node_to_prune))
+    }
     old_left_node <- tree_array[node_to_prune,2]
     old_right_node <- tree_array[node_to_prune,3]
     new_tree_array <- prune_node(node_to_prune, tree_array)
@@ -823,6 +840,9 @@ mh.tree <- function(tree_array, X, y, a, mu_bar, nu, lambda, alpha, beta){
     nodes_to_swap <- sample.swap.nodes(tree_array)
     node_to_swap_1 <- nodes_to_swap[1]
     node_to_swap_2 <- nodes_to_swap[2]
+    if (verbose){
+      print(paste0("SWAPPING NODES: ", node_to_swap_1, " and ", node_to_swap_2))
+    }
     new_tree_array <- swap_nodes(node_to_swap_1, node_to_swap_2, tree_array, X, y, a, mu_bar)
     if (!valid_tree(new_tree_array)){
       log_mh_ratio <- -Inf
@@ -834,20 +854,28 @@ mh.tree <- function(tree_array, X, y, a, mu_bar, nu, lambda, alpha, beta){
     }
   } else if (new_move == "CHANGE"){
     node_to_change <- sample.change.node(tree_array)
+    if (verbose){
+      print(paste0("CHANGING NODE: ", node_to_change))
+    }
     subset_inds <- get_subset(node_to_change, tree_array, X)
     X_subset = X[subset_inds,]; p <- ncol(X)
     split_rule <- sample.new.split.rule(X_subset, p)
-    split_feature <- split_rule[1]
-    split_value <- split_rule[2]
-    new_tree_array <- change_node(node_to_change, tree_array, split_feature, 
-                                  split_value, X, y, a, mu_bar)
-    if (!valid_tree(new_tree_array)){
+    if (is.null(split_rule)){
+      # Automatically reject leaf nodes that can't be split
       log_mh_ratio <- -Inf
     } else{
-      log.lr <- tree.log.likelihood.ratio(tree_array, new_tree_array, X, y, a, mu_bar, nu, lambda)
-      log_prior_orig_tree <- log_p_tree_node(node_to_change, tree_array, alpha, beta, X, y, 10000)
-      log_prior_prop_tree <- log_p_tree_node(node_to_change, new_tree_array, alpha, beta, X, y, 10000)
-      log_mh_ratio <- log.lr + log_prior_prop_tree - log_prior_orig_tree
+      split_feature <- split_rule[1]
+      split_value <- split_rule[2]
+      new_tree_array <- change_node(node_to_change, tree_array, split_feature, 
+                                    split_value, X, y, a, mu_bar)
+      if (!valid_tree(new_tree_array)){
+        log_mh_ratio <- -Inf
+      } else{
+        log.lr <- tree.log.likelihood.ratio(tree_array, new_tree_array, X, y, a, mu_bar, nu, lambda)
+        log_prior_orig_tree <- log_p_tree_node(node_to_change, tree_array, alpha, beta, X, y, 10000)
+        log_prior_prop_tree <- log_p_tree_node(node_to_change, new_tree_array, alpha, beta, X, y, 10000)
+        log_mh_ratio <- log.lr + log_prior_prop_tree - log_prior_orig_tree
+      }
     }
   } else {
     new_tree_array <- NULL
@@ -998,8 +1026,12 @@ par(mfrow = c(1,1))
 plot(y, y_hat)
 
 # Perform several more iterations of the algorithm
-mc = 2000
-for (i in 1:mc){
+verbose = T
+burnin = 500
+mc = 1000
+nthin = 20
+y_hat_samples <- matrix(NA, nrow = mc/nthin, ncol = n)
+for (i in 1:(burnin+mc)){
   # Perform one step of the MH-algorithm
   mh_list = mh.tree(tree_array, X, y, a, mu_bar, nu, lambda, alpha, beta)
   
@@ -1008,8 +1040,10 @@ for (i in 1:mc){
   mh_alpha = mh_list$acceptance_prob
   mh_decision = mh_list$decision
   mh_move = mh_list$move
-  print(paste0("MOVE = ", mh_move))
-  print(paste0("DECISION = ", mh_decision))
+  if (verbose){
+    print(paste0("MOVE = ", mh_move))
+    print(paste0("DECISION = ", mh_decision))
+  }
   
   # Sample mu and sigma
   mu_vec = mu.sample(tree_array, sigma2, a, mu_bar)
@@ -1018,8 +1052,15 @@ for (i in 1:mc){
   # Predict y given mu and sigma
   leaf_numbers = predict_tree_leaf(tree_array, X)
   y_hat = mu_vec[leaf_numbers]
-  if (i %% 10 == 0){
+  if (i %% nthin == 0){
     plot(y, y_hat)
+  }
+  if ((i > burnin) & (((i - burnin) %% nthin == 0))){
+    y_hat_samples[(i - burnin) %/% nthin,] <- y_hat
   }
 }
 
+plot(X[,1], y, pch = 16, cex = 1)
+for (i in 1:nrow(y_hat_samples)){
+  points(X[,1], y_hat_samples[i,], col = "gray", pch = 16, cex = 0.25)
+}
