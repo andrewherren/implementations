@@ -107,13 +107,18 @@ variance_reduction = function(cutoff, x, y){
 # For a given restricted set of x and y, find the optimal x 
 # cutoff at which to split
 tree_split = function(x, y, epsilon = EPSILON){
+  # Quit with null value if X is not a matrix with >1 row
+  if (is.null(nrow(x))){
+    return(NULL)
+  }
+  
   # Look for optimal splits along each variable
   p = ncol(x)
-  optim_results = sapply(1:p, function(j) optimize(function(i) variance_reduction(i, x[,j], y), range(x), maximum = T))
+  optim_results = sapply(1:p, function(j) optimize(function(i) variance_reduction(i, x[,j], y), range(x[,j]), maximum = T))
   optim_results = matrix(as.numeric(optim_results), ncol = p, byrow = F)
-
+  
   # Choose the variable with the largest reduction in variance
-  best_col = (1:p)[which(optim_results[2,]==max(optim_results[2,]))]
+  best_col = (1:p)[which(optim_results[2,]==max(optim_results[2,]))[1]]
   
   if (optim_results[2,best_col] > epsilon) return(c(best_col, optim_results[1,best_col]))
   else return(NULL)
@@ -128,7 +133,7 @@ fit_tree = function(tree_array, x, y, EPSILON, MAX_ITER){
     # Pop the current node from the queue
     current_node_index = split_queue[[1]]
     split_queue = split_queue[-1]
-    
+
     # Get the subsetting criteria at this node
     node_subset = get_subset(current_node_index, tree_array, x)
     x_node = x[node_subset,]
@@ -136,7 +141,7 @@ fit_tree = function(tree_array, x, y, EPSILON, MAX_ITER){
     
     # Search over all variables for a splitting rule
     split_value = tree_split(x_node, y_node, EPSILON)
-    
+
     # Update the tree array and append to the queue
     if (!is.null(split_value)){
       # See how much storage is left in the array
@@ -184,18 +189,18 @@ fit_tree = function(tree_array, x, y, EPSILON, MAX_ITER){
 
 # Generate data from a simple 1D function
 n = 5000
-p = 10
+p = 2
 x = matrix(runif(n*p, -1, 1), ncol = p)
 # # Example 1: Monotone step function
-# b_0 = 2; b_1 = 1
-# E_y = (b_0 + b_1*(x[,1] > -0.75) + b_1*(x[,1] > -0.5) + b_1*(x[,1] > -0.25) + 
-#        b_1*(x[,1] > 0) + b_1*(x[,1] > 0.25) + b_1*(x[,1] > 0.5) + b_1*(x[,1] > 0.75))
+b_0 = 2; b_1 = 1
+E_y = (b_0 + b_1*(x[,1] > -0.75) + b_1*(x[,1] > -0.5) + b_1*(x[,1] > -0.25) +
+       b_1*(x[,1] > 0) + b_1*(x[,1] > 0.25) + b_1*(x[,1] > 0.5) + b_1*(x[,1] > 0.75))
 # # Example 2: Fluctuating step function
 # b_0 = 2; b_1 = 1
 # E_y = (b_0 + b_1*(x[,1] > -0.75) + b_1*(x[,1] > -0.5) - b_1*(x[,1] > -0.25) -
 #        b_1*(x[,1] > 0) + b_1*(x[,1] > 0.25) + b_1*(x[,1] > 0.5) - b_1*(x[,1] > 0.75))
 # # Example 3: sin function
-E_y = sin(x[,1]*pi) + sin(x[,2]*pi)
+# E_y = sin(x[,1]*pi) + sin(x[,2]*pi)
 # Sample random (additive) outcome noise
 eps = rnorm(n, 0, 0.1)
 y = E_y + eps
